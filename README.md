@@ -11,6 +11,10 @@ A robust Node.js implementation for syncing Stremio playback status to Discord R
 - Intelligent Caching: Maintains a local cache.json file with fuzzy matching support to reduce API overhead and ensure consistent presence even for slightly different filenames.
 - Differential Updates: Only updates Discord Presence when a change in title, state, or poster is detected to respect rate limits.
 
+## Upcoming Enhancements
+- Enahnced Title Extraction for unconventional titles
+- Better Movie Support
+
 ## Prerequisites
 
 - Node.js (v16 or higher recommended)
@@ -34,7 +38,7 @@ Create a .env file in the root directory with the following variables:
 
 Example .env:
 ```env
-CLIENT_ID=1462212189246062848
+CLIENT_ID=3846067607497881711
 STREMIO_ENDPOINT=http://127.0.0.1:11470/stats.json
 ```
 
