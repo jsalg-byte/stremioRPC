@@ -11,6 +11,8 @@
 
 ---
 
+
+
 ## Filename Normalization & Metadata Pipeline
 
 Raw video filenames often contain release groups, codec tags, resolution tags, and arbitrary delimiters. `stremioRPC` runs incoming streams through a multi-stage sanitization pipeline:
@@ -88,7 +90,7 @@ npm install
 Create a `.env` file in the project root:
 
 ```env
-CLIENT_ID=1462212189246062848
+CLIENT_ID=3846067607497881711
 STREMIO_ENDPOINT=http://127.0.0.1:11470/stats.json
 ```
 
@@ -136,6 +138,13 @@ To run `stremioRPC` automatically in the background on macOS:
    cp com.user.stremio-rpc.plist ~/Library/LaunchAgents/
    launchctl load ~/Library/LaunchAgents/com.user.stremio-rpc.plist
    ```
+
+---
+
+## Roadmap & Upcoming Enhancements
+
+- Enhanced title extraction and heuristics for unconventional release naming formats
+- Standalone feature film metadata resolution and duration tracking
 
 ---
 
