@@ -30,6 +30,7 @@ const testCases = [
 
 console.log("--- Starting Advanced Sanitization Tests ---");
 
+let allPassed = true;
 testCases.forEach((tc, index) => {
     const result = processFilename(tc.input);
     const titleMatch = result.title.trim().toLowerCase() === tc.expectedTitle.toLowerCase();
@@ -46,7 +47,12 @@ testCases.forEach((tc, index) => {
         console.log("Verdict:  FAIL ❌");
         if (!titleMatch) console.log("  -> Title Mismatch");
         if (!stateMatch) console.log("  -> State Mismatch");
+        allPassed = false;
     }
 });
 
 console.log("\n--- Tests Completed ---");
+if (!allPassed) {
+    process.exit(1);
+}
+process.exit(0);

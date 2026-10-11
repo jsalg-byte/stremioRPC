@@ -1,70 +1,144 @@
-# Stremio Discord Rich Presence Pipeline
+# Stremio Discord Rich Presence
 
-A robust Node.js implementation for syncing Stremio playback status to Discord Rich Presence. This tool focuses on cleaning messy torrent filenames into canonical titles and fetching accurate poster art using NLP and public APIs.
+> Lightweight daemon that monitors local Stremio playback, normalizes raw video filenames via NLP, fetches poster metadata, and broadcasts rich activity to Discord.
 
-## Features
+[![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&style=flat-square)](https://nodejs.org)
+[![Discord RPC](https://img.shields.io/badge/Discord-Rich%20Presence-5865F2?logo=discord&style=flat-square)](https://discord.com)
+[![Tests](https://img.shields.io/badge/Tests-Passing-success?style=flat-square)](#testing--verification)
+[![License](https://img.shields.io/badge/License-ISC-lightgrey?style=flat-square)](LICENSE)
 
-- Canonical Title Extraction: Uses regex and the Compromise NLP library to strip technical tags, release group metadata, and episode-specific names from filenames.
-- Robust Sanitization: Automatically removes brackets, parentheses, technical jargon (1080p, x265, HEVC), and invisible characters.
-- Episode Detection: Supports multiple patterns including SxE, SxxExx, and Anime-style hyphenated episode numbering.
-- Poster Art Integration: Prioritizes Stremio metadata for posters and falls back to a two-stage TVMaze API search (Single Search and General Search) for missing covers.
-- Intelligent Caching: Maintains a local cache.json file with fuzzy matching support to reduce API overhead and ensure consistent presence even for slightly different filenames.
-- Differential Updates: Only updates Discord Presence when a change in title, state, or poster is detected to respect rate limits.
+`stremioRPC` runs as a background process alongside your Stremio desktop client. It polls Stremio's internal streaming server (`stats.json`), intercepts raw torrent video filenames (e.g., `[Reaktor] Fullmetal Alchemist Brotherhood - E04 v2 [1080p].mkv`), normalizes them into clean human-readable series titles and episode indices, resolves high-resolution cover posters, and synchronizes real-time playback state to your Discord profile without violating Discord rate limits.
 
-## Prerequisites
+---
 
-- Node.js (v16 or higher recommended)
-- Stremio with the Local HTTPS/HTTP server enabled (usually port 11470)
-- Discord Desktop Client
+## Filename Normalization & Metadata Pipeline
 
-## Installation
+Raw video filenames often contain release groups, codec tags, resolution tags, and arbitrary delimiters. `stremioRPC` runs incoming streams through a multi-stage sanitization pipeline:
 
-1. Clone the repository to your local machine.
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+```mermaid
+flowchart TD
+    Raw["Raw Stremio Stream / Filename<br/>(e.g., The.Mandalorian.S01E01.Chapter.One.1080p.mkv)"] --> CacheCheck{"Fuzzy Cache Check<br/>(cache.json >90% match)"}
 
-## Configuration
+    CacheCheck -- Hit --> CachedData["Reuse Canonical Title & Poster URL"]
+    CacheCheck -- Miss --> Cleaner["Separator Normalizer<br/>(Replace dots, underscores, scrub brackets)"]
 
-Create a .env file in the root directory with the following variables:
+    Cleaner --> EpisodeDetector["Episode & Season Parser<br/>(Match SxxExx, SxE, or Anime '- XX')"]
+    EpisodeDetector --> NLPEngine["Title Normalizer<br/>(Compromise NLP tag stripping)"]
+    
+    NLPEngine --> PosterFallback{"Poster Resolution"}
+    PosterFallback -- 1. Stremio Stream --> MetaPoster["Stremio Stream Poster"]
+    PosterFallback -- 2. TVMaze Single Search --> TVMazeSingle["TVMaze Exact Match"]
+    PosterFallback -- 3. TVMaze Query Search --> TVMazeSearch["TVMaze Top Candidate"]
+    PosterFallback -- 4. Fallback --> DefaultPoster["Default Stremio Brand Asset"]
 
-- CLIENT_ID: Your Discord Application Client ID.
-- STREMIO_ENDPOINT: The URL to your Stremio stats.json (default: http://127.0.0.1:11470/stats.json).
+    MetaPoster --> CacheSave["Write to cache.json"]
+    TVMazeSingle --> CacheSave
+    TVMazeSearch --> CacheSave
+    DefaultPoster --> CacheSave
+    CachedData --> RateLimitCheck{"State Changed?"}
+    CacheSave --> RateLimitCheck
 
-Example .env:
+    RateLimitCheck -- Yes --> DiscordIPC["Discord IPC Socket<br/>(discord-rpc Client.setActivity)"]
+    RateLimitCheck -- No --> Skip["Skip (Respect Rate Limits)"]
+```
+
+---
+
+## Core Capabilities
+
+- **Intelligent Title Normalization**:
+  - Automatically handles western season/episode schemes (`S01E01`, `1x04`).
+  - Corrects anime absolute episode numbering (e.g. `[HorribleSubs] My Hero Academia - 88`).
+  - Strips release groups (`[VCB-Studio]`, `[Reaktor]`), audio specs (`Dual-Audio`, `flac`, `5.1`), codecs (`x265`, `HEVC`, `h264`), and resolution metadata (`1080p`, `720p`).
+  - Normalizes titles using the `compromise` NLP library.
+- **Multi-Stage Poster Resolution**:
+  - Checks active Stremio stream metadata first.
+  - Queries TVMaze Single Search API for official high-resolution key art.
+  - Falls back to TVMaze General Search with fuzzy relevance weighting.
+  - Reverts to a curated default Stremio asset if no external art is found.
+- **Fuzzy In-Memory & Disk Caching**:
+  - Maintains `cache.json` indexed by filename and similarity keys.
+  - Employs `string-similarity` (Dice's Coefficient) with a 90% threshold to prevent repeated API calls for minor filename variations.
+- **Rate-Limit & Polling Safety**:
+  - Polls local endpoint every 15 seconds.
+  - Performs differential state checks before dispatching calls to Discord's local IPC socket, preventing activity flood penalties.
+- **Background macOS Daemon Support**: Includes a pre-configured `launchd` plist (`com.user.stremio-rpc.plist`) for automatic startup on login.
+
+---
+
+## Installation & Setup
+
+### Prerequisites
+
+- Node.js 18+
+- [Stremio Desktop](https://www.stremio.com/) with local streaming server enabled (default port `11470`)
+- Discord Desktop client running locally
+
+### 1. Installation
+
+```sh
+git clone https://github.com/jsalg-byte/stremioRPC.git
+cd stremioRPC
+
+npm install
+```
+
+### 2. Configuration
+
+Create a `.env` file in the project root:
+
 ```env
 CLIENT_ID=1462212189246062848
 STREMIO_ENDPOINT=http://127.0.0.1:11470/stats.json
 ```
 
-## Usage
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `CLIENT_ID` | Discord Application Client ID registered in Discord Developer Portal | `1462212189246062848` |
+| `STREMIO_ENDPOINT` | Local Stremio streaming stats endpoint | `http://127.0.0.1:11470/stats.json` |
 
-Start the RPC script:
-```bash
-node index.js
+### 3. Running the Service
+
+```sh
+npm start
 ```
 
-The script will automatically connect to Discord and begin polling your local Stremio instance every 15 seconds.
+---
 
-## Technical Details
+## Testing & Verification
 
-### Sanitization Pipeline
+The test suite validates title normalization and episode extraction against real-world torrent release conventions:
 
-The pipeline follows these steps:
-1. Normalizes separators (dots, underscores) to spaces.
-2. Identifies the first episode marker (e.g., S01E01 or - 01).
-3. Discards everything after the marker to isolate the Series/Movie title.
-4. Scrubs technical tags and release group info.
-5. Performs NLP normalization to finalize the canonical title.
+```sh
+# Run sanitization and episode parsing test suite
+npm test
+```
 
-### Caching Strategy
+### Verified Test Cases
 
-The system uses the string-similarity library to perform fuzzy matching against the cache. If a new filename is 90% similar to an existing cached entry, it reuses the previously sanitized title and fetched poster URL to avoid redundant processing and API calls.
+| Input Filename | Sanitized Title | Parsed State |
+| :--- | :--- | :--- |
+| `Lucky Star - Episode 03 - Various People.mkv` | `Lucky Star` | `[1x3]` |
+| `[Reaktor] Fullmetal Alchemist Brotherhood - E04 v2 [1080p][x265].mkv` | `Fullmetal Alchemist Brotherhood` | `[1x4]` |
+| `The.Mandalorian.S01E01.Chapter.One.1080p.WEB-DL.x264.mkv` | `The Mandalorian` | `[1x1]` |
+| `Attack.on.Titan.S04E12.720p.h264.mp4` | `Attack on Titan` | `[4x12]` |
+| `Mushoku Tensei S02E15 [1080p].mkv` | `Mushoku Tensei` | `[2x15]` |
 
-### Poster Fetching Logic
+---
 
-1. Checks active Stremio stream metadata for an internal poster URL.
-2. Queries TVMaze Single Search API for an exact match.
-3. Falls back to TVMaze General Search and selects the top result if Single Search fails.
-4. Reverts to a default Stremio asset if no poster is found.
+## macOS Auto-Start (launchd)
+
+To run `stremioRPC` automatically in the background on macOS:
+
+1. Update the node path and working directory in `com.user.stremio-rpc.plist`.
+2. Copy the file to your user LaunchAgents folder:
+   ```sh
+   cp com.user.stremio-rpc.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/com.user.stremio-rpc.plist
+   ```
+
+---
+
+## License
+
+This project is licensed under the ISC License. See [LICENSE](LICENSE) for details.
